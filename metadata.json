@@ -1,0 +1,5 @@
+{
+  "name": "Cantina PDV",
+  "description": "Um aplicativo de Ponto de Venda (PDV) para uma cantina, com gerenciamento de produtos, vendas e relatórios, com dados persistidos localmente.",
+  "requestFramePermissions": []
+}
