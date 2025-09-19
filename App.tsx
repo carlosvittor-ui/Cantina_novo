@@ -382,4 +382,17 @@ export default function App() {
             </main>
 
             {notification && (
-                <div className="fixed top-20 right-4 bg-green-
+                <div className="fixed top-20 right-4 bg-green-50 text-green-800 border border-green-200 px-6 py-3 rounded-lg shadow-lg z-50">
+                    {notification}
+                </div>
+            )}
+
+            <OpenCashDrawerModal
+                isOpen={isCashDrawerModalOpen}
+                onClose={() => setIsCashDrawerModalOpen(false)}
+                onStartDay={handleStartDay}
+                previousClosingCash={cashDrawer.previousClosingCash}
+            />
+        </div>
+    );
+}
