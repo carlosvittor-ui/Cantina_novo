@@ -7,7 +7,8 @@ import DailyReport from './components/DailyReport';
 import PreviousReport from './components/PreviousReport';
 import OpenCashDrawerModal from './components/OpenCashDrawerModal';
 import { Product, Sale, View, CashDrawer, HistoricalReport, PaymentMethod, SaleItem, Withdrawal } from './types';
-import { supabase } from './supabaseClient';  // <-- ADICIONADO
+import { getSupabase } from './supabaseClient';
+
 
 // Custom hook for persisting state to localStorage
 function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
