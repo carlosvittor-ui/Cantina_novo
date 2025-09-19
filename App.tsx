@@ -7,7 +7,7 @@ import PreviousReport from './components/PreviousReport';
 import OpenCashDrawerModal from './components/OpenCashDrawerModal';
 import { Product, Sale, View, CashDrawer, HistoricalReport, PaymentMethod, SaleItem, Withdrawal } from './types';
 
-// Custom hook for persisting state to localStorage
+// Custom hook for persisting state to localStorage 
 function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
     const [state, setState] = useState<T>(() => {
         try {
