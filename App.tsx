@@ -8,6 +8,16 @@ import OpenCashDrawerModal from './components/OpenCashDrawerModal';
 import { Product, Sale, View, CashDrawer, HistoricalReport, PaymentMethod, SaleItem, Withdrawal } from './types';
 import { getSupabase } from './supabaseClient'; // ADICIONADO
 
+// ======= Named export usado por components (ex.: ProductRegistration) =======
+export function formatCurrency(value: number): string {
+  try {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+  } catch {
+    // Fallback bem simples se Intl falhar
+    return `R$ ${Number(value || 0).toFixed(2).replace('.', ',')}`;
+  }
+}
+
 // Custom hook for persisting state to localStorage
 function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
     const [state, setState] = useState<T>(() => {
