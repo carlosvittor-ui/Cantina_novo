@@ -28,6 +28,19 @@ function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch
         }
         return initialValue;
     });
+useEffect(() => {
+  (async () => {
+    try {
+      const { products, sales, cashDrawer, historicalReports } = await fetchInitialData();
+      if (products?.length) setProducts(products);
+      if (sales?.length) setSales(sales);
+      if (historicalReports && Object.keys(historicalReports).length) setHistoricalReports(historicalReports);
+      if (cashDrawer) setCashDrawer(prev => ({ ...prev, ...cashDrawer }));
+    } catch (e) {
+      console.error(e);
+    }
+  })();
+}, []);
 
     useEffect(() => {
         try {
@@ -69,14 +82,12 @@ export default function App() {
         }, 3000);
     }, []);
 
-    const handleAddProduct = (productData: Omit<Product, 'id'>) => {
-        const newProduct: Product = {
-            ...productData,
-            id: Date.now().toString(),
-        };
-        setProducts(prev => [...prev, newProduct]);
-        showNotification(`Produto "${newProduct.name}" adicionado!`);
-    };
+const handleAddProduct = async (productData: Omit<Product, 'id'>) => {
+  const newProduct: Product = { id: crypto.randomUUID?.() ?? `p-${Date.now()}`, ...productData };
+  setProducts(prev => [...prev, newProduct]);
+  try { await upsertProduct(newProduct); } catch (e) { console.error(e); }
+  showNotification(`Produto "${newProduct.name}" adicionado!`);
+};
 
     const handleBulkAddProducts = (newProductsData: Omit<Product, 'id'>[]) => {
         const newProducts: Product[] = newProductsData.map((p, index) => ({
@@ -87,10 +98,12 @@ export default function App() {
         showNotification(`${newProducts.length} produtos importados com sucesso!`);
     };
 
-    const handleUpdateProduct = (updatedProduct: Product) => {
-        setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
-        showNotification(`Produto "${updatedProduct.name}" atualizado!`);
-    };
+const handleUpdateProduct = async (updatedProduct: Product) => {
+  setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+  try { await upsertProduct(updatedProduct); } catch (e) { console.error(e); }
+  showNotification(`Produto "${updatedProduct.name}" atualizado!`);
+};
+
 
     const handleAddSale = (
         cartItems: SaleItem[], 
@@ -123,6 +136,20 @@ export default function App() {
         };
 
         setSales(prev => [...prev, newSale]);
+
+        try {
+  await recordSale(newSale);
+  await upsertProducts(updatedProducts); // sincroniza estoque
+} catch (e) {
+  console.error(e);
+}
+
+const handleStartDay = async (openingAmount: number) => {
+  setCashDrawer(prev => ({ ...prev, isOpen: true, openingCash: openingAmount }));
+  setIsCashDrawerModalOpen(false);
+  try { await openCashDrawer(openingAmount, cashDrawer.previousClosingCash); } catch (e) { console.error(e); }
+  showNotification(`Caixa iniciado com ${formatCurrency(openingAmount)}.`);
+};
 
         // Update stock
         const updatedProducts = [...products];
@@ -165,17 +192,26 @@ export default function App() {
             withdrawals: [],
         };
 
-        setHistoricalReports(prev => ({ ...prev, [todayStr]: newReport }));
+        try { await closeCashDrawer(closingCash); } catch (e) { console.error(e); }
+ try { await recordWithdrawal(newWithdrawal, date); } catch (e) { console.error(e); }
+
+
+          setHistoricalReports(prev => ({
+    ...prev,
+    [date]: { ...reportToUpdate, withdrawals: [...(reportToUpdate.withdrawals || []), newWithdrawal] }
+  }));
+
+        
         setCashDrawer({ isOpen: false, openingCash: 0, previousClosingCash: closingCash });
         showNotification(`Dia encerrado. Saldo final do caixa: ${formatCurrency(closingCash)}.`);
+         
+  showNotification("Sangria registrada!");
     };
 
-    const handleAddWithdrawal = (date: string, amount: number, reason: string) => {
-        const reportToUpdate = historicalReports[date];
-        if (!reportToUpdate) {
-            showNotification("Erro: Relatório não encontrado para esta data.");
-            return;
-        }
+const handleAddWithdrawal = async (date: string, amount: number, reason: string) => {
+  const reportToUpdate = historicalReports[date];
+  if (!reportToUpdate) { showNotification("Erro: Relatório não encontrado para esta data."); return; }
+
 
         const newWithdrawal: Withdrawal = {
             id: `wd-${Date.now()}`,
