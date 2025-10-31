@@ -28,15 +28,6 @@ export function formatCurrency(value: number): string {
   }
 }
 
-// ===== Data (fuso local) =====
-// [ALTERAÇÃO] Usar chave de dia baseada no HORÁRIO LOCAL, evita virar o dia às 21/22h (UTC).
-function localDayKey(d: Date = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 // ===== Hook de estado persistente no localStorage =====
 function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [state, setState] = useState<T>(() => {
@@ -66,40 +57,43 @@ function usePersistentState<T>(key: string, initialValue: T): [T, React.Dispatch
 }
 
 const App: React.FC = () => {
-  const [products, setProducts] = usePersistentState<Product[]>('products', []);
-  const [sales, setSales] = usePersistentState<Sale[]>('sales', []);
-  const [currentView, setCurrentView] = usePersistentState<View>('currentView', 'register');
-
-  const [cashDrawer, setCashDrawer] = usePersistentState<CashDrawer>('cashDrawer', {
+  const [products, setProducts] = usePersistentState<Product[]>('pdv-products', []);
+  const [sales, setSales] = usePersistentState<Sale[]>('pdv-sales', []);
+  const [currentView, setCurrentView] = usePersistentState<View>('pdv-view', 'register');
+  const [cashDrawer, setCashDrawer] = usePersistentState<CashDrawer>('pdv-cashDrawer', {
     isOpen: false,
     openingCash: 0,
     previousClosingCash: 0,
   });
-
-  const [historicalReports, setHistoricalReports] = usePersistentState<Record<string, HistoricalReport>>(
-    'historicalReports',
-    {}
-  );
+  const [historicalReports, setHistoricalReports] =
+    usePersistentState<Record<string, HistoricalReport>>('pdv-historicalReports', {});
 
   const [notification, setNotification] = useState<string | null>(null);
   const [isCashDrawerModalOpen, setIsCashDrawerModalOpen] = useState(false);
 
   const showNotification = useCallback((message: string) => {
     setNotification(message);
-    setTimeout(() => setNotification(null), 2500);
+    setTimeout(() => setNotification(null), 3000);
   }, []);
 
-  // ===== Carregar dados iniciais do Supabase (opcional) =====
+  // Carrega dados do Supabase ao iniciar (mantém app funcionando offline caso falhe)
   useEffect(() => {
     (async () => {
       try {
-        const initial = await fetchInitialData();
-        if (initial?.products?.length) setProducts(initial.products);
-        if (initial?.sales?.length) setSales(initial.sales);
-        if (initial?.cashDrawer) setCashDrawer(initial.cashDrawer);
-        if (initial?.historicalReports) setHistoricalReports(initial.historicalReports);
+        const data = await fetchInitialData();
+        if (data?.products) setProducts(data.products);
+        if (data?.sales) setSales(data.sales);
+        if (data?.historicalReports) setHistoricalReports(data.historicalReports);
+        if (data?.cashDrawer) {
+          setCashDrawer(prev => ({
+            ...prev,
+            isOpen: !!data.cashDrawer.isOpen,
+            openingCash: data.cashDrawer.openingCash ?? 0,
+            previousClosingCash: data.cashDrawer.previousClosingCash ?? prev.previousClosingCash,
+          }));
+        }
       } catch (e) {
-        console.warn('Falha ao buscar dados iniciais:', e);
+        console.warn('Falha ao carregar do Supabase (seguindo local):', e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,40 +141,43 @@ const App: React.FC = () => {
   const handleAddSale = async (
     cartItems: SaleItem[],
     paymentMethod: PaymentMethod,
-    discount: { type: 'percentage' | 'fixed'; value?: number }
+    discount?: { type: 'percentage' | 'fixed'; value: number }
   ) => {
-    if (!cartItems.length) return;
+    if (!cartItems?.length) return;
 
-    const subtotal = cartItems.reduce((acc, it) => acc + it.pricePerItem * it.quantity, 0);
+    const subtotal = cartItems.reduce((acc, item) => acc + item.pricePerItem * item.quantity, 0);
+
     let discountAmount = 0;
-    if (discount.value && discount.value > 0) {
-      discountAmount = discount.type === 'percentage'
-        ? (subtotal * discount.value) / 100
-        : discount.value;
+    if (discount && discount.value > 0) {
+      discountAmount = discount.type === 'percentage' ? subtotal * (discount.value / 100) : discount.value;
     }
-    discountAmount = Math.min(subtotal, discountAmount);
     const total = subtotal - discountAmount;
 
     const newSale: Sale = {
       id: `sale-${Date.now()}`,
       items: cartItems,
       subtotal,
-      discountType: discount.value ? discount.type : undefined,
-      discountValue: discount.value,
+      discountType: discount?.type,
+      discountValue: discount?.value,
       discountAmount,
       total,
       paymentMethod,
       timestamp: new Date(),
     };
 
-    // Atualiza estoque local
-    const updatedProducts = products.map(p => {
-      const item = cartItems.find(ci => ci.productId === p.id);
-      if (!item) return p;
-      return { ...p, stock: Math.max(0, p.stock - item.quantity) };
-    });
-
     setSales(prev => [...prev, newSale]);
+
+    // Atualiza estoque local
+    const updatedProducts = [...products];
+    cartItems.forEach(item => {
+      const idx = updatedProducts.findIndex(p => p.id === item.productId);
+      if (idx !== -1) {
+        updatedProducts[idx] = {
+          ...updatedProducts[idx],
+          stock: Math.max(0, updatedProducts[idx].stock - item.quantity),
+        };
+      }
+    });
     setProducts(updatedProducts);
 
     // Persiste no Supabase (se falhar, segue local)
@@ -197,22 +194,20 @@ const App: React.FC = () => {
   const handleStartDay = async (openingAmount: number) => {
     setCashDrawer(prev => ({ ...prev, isOpen: true, openingCash: openingAmount }));
     setIsCashDrawerModalOpen(false);
-
     try {
-      await openCashDrawer(openingAmount);
+      await openCashDrawer(openingAmount, cashDrawer.previousClosingCash);
     } catch (e) {
       console.warn(e);
     }
-
     showNotification(`Caixa iniciado com ${formatCurrency(openingAmount)}.`);
   };
 
   const handleEndDay = async () => {
     const today = new Date();
-    const todayStr = localDayKey(today); // [ALTERAÇÃO] antes: toISOString (UTC)
+    const todayStr = today.toISOString().split('T')[0];
 
     const todaySales = sales.filter(
-      sale => localDayKey(new Date(sale.timestamp as any)) === todayStr // [ALTERAÇÃO]
+      sale => new Date(sale.timestamp).toISOString().split('T')[0] === todayStr
     );
 
     const totalCashSales = todaySales
@@ -272,7 +267,7 @@ const App: React.FC = () => {
     showNotification('Retirada registrada!');
   };
 
-  const today = useMemo(() => localDayKey(new Date()), []); // [ALTERAÇÃO]
+  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
@@ -293,16 +288,19 @@ const App: React.FC = () => {
             <SalesScreen products={products} onAddSale={handleAddSale} />
           ) : (
             <div className="flex flex-col items-center justify-center h-[calc(100vh-150px)] text-center p-4">
-              <div className="text-2xl font-bold mb-2">Caixa fechado</div>
-              <div className="mb-6 text-gray-500">
-                Vá até a aba <b>Relatório</b> para iniciar o dia antes de vender.
+              <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-indigo-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6h4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h2 className="text-2xl font-bold mb-2">Caixa Fechado</h2>
+                <p className="text-gray-600 dark:text-gray-300 mb-4">Para registrar vendas, você precisa primeiro iniciar o dia.</p>
+                <button
+                  onClick={() => setCurrentView('report')}
+                  className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                >
+                  Ir para a aba "Relatório"
+                </button>
               </div>
-              <button
-                onClick={() => setCurrentView('report')}
-                className="px-5 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-              >
-                Ir para Relatório
-              </button>
             </div>
           )
         )}
@@ -310,14 +308,9 @@ const App: React.FC = () => {
         {currentView === 'report' && (
           <DailyReport
             sales={sales}
-            formatCurrency={formatCurrency}
-            openingCash={cashDrawer.openingCash}
-            isCashDrawerOpen={cashDrawer.isOpen}
-            onStartDayClick={() => setIsCashDrawerModalOpen(true)}
+            cashDrawer={cashDrawer}
+            onOpenCashDrawer={() => setIsCashDrawerModalOpen(true)}
             onEndDay={handleEndDay}
-            todayKey={today}
-            withdrawals={historicalReports[today]?.withdrawals || []}
-            onAddWithdrawal={handleAddWithdrawal}
           />
         )}
 
@@ -326,12 +319,13 @@ const App: React.FC = () => {
             allSales={sales}
             historicalReports={historicalReports}
             onAddWithdrawal={handleAddWithdrawal}
+            cashDrawer={cashDrawer}
           />
         )}
       </main>
 
       {notification && (
-        <div className="fixed bottom-5 right-5 px-4 py-2 rounded bg-green-600 text-white shadow-lg">
+        <div className="fixed top-20 right-4 bg-green-50 dark:bg-green-900 text-green-900 dark:text-green-50 border border-green-200 dark:border-green-800 rounded-lg px-6 py-3 shadow-lg z-50">
           {notification}
         </div>
       )}
